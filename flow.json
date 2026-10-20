@@ -1,0 +1,16 @@
+{
+  "key": "infer_custom_speakers",
+  "title": "Infer Custom Speakers",
+  "version": 1,
+  "desc": "Offline infer custom speakers with complete preflight and atomic results.",
+  "programs": {
+    "pyannote": 1
+  },
+  "flows": {},
+  "tags": {
+    "speaker": 2,
+    "voice": 1
+  },
+  "gh_repo": "https://github.com/ariym/mf-flow-infer-custom-speakers",
+  "artifacts": []
+}

@@ -1,0 +1,30 @@
+name: Native release candidate
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Integer manifest version
+        required: true
+        default: '1'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: test "$(uname -m)" = arm64
+      - run: go test ./... && go vet ./...
+      - name: Build archive
+        env:
+          VERSION: ${{ inputs.version }}
+        run: python3 scripts/release.py --repo "$GITHUB_REPOSITORY" --version "$VERSION" --platform darwin/arm64 --output dist/release
+      - name: Upload draft for real media and relocation validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: gh release create "v$VERSION" dist/release/* --draft --title "v$VERSION" --notes 'Native candidate. Publish only after real offline media and relocation checks pass.'

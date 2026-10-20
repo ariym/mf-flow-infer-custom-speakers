@@ -1,0 +1,16 @@
+{
+  "steps": [
+    {
+      "program": "pyannote",
+      "operation": "identify"
+    }
+  ],
+  "programs": {
+    "pyannote": 1
+  },
+  "tags": {
+    "speaker": 2,
+    "voice": 1
+  },
+  "key": "infer_custom_speakers"
+}
