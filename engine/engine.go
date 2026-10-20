@@ -274,6 +274,11 @@ func Execute(ctx context.Context, req Request, spec Spec, onlyPreflight bool) (m
 	checks := []any{}
 	requests := []map[string]any{}
 	steps := []Step{}
+	preflightWork, err := os.MkdirTemp("", "mf-preflight-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(preflightWork)
 	// Complete every prerequisite and decode before invoking the first run command.
 	for _, step := range spec.Steps {
 		if !enabled(step, req) {
@@ -283,6 +288,9 @@ func Execute(ctx context.Context, req Request, spec Spec, onlyPreflight bool) (m
 		if err != nil {
 			return nil, err
 		}
+		// The parent owns decoding work so forced child termination cannot leave
+		// normalization files outside the job's cleanup boundary.
+		r["output_dir"] = preflightWork
 		result, err := Invoke(ctx, req.Programs[step.Program].Path, "preflight", r)
 		if err != nil {
 			return nil, err

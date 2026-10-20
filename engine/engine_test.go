@@ -171,3 +171,50 @@ esac
 		t.Fatal("canceled job left staging files")
 	}
 }
+
+func TestCancelPreflightCleansNormalizationFiles(t *testing.T) {
+	req, spec, log := fixture(t)
+	spec.Steps = spec.Steps[:1]
+	script := `#!/bin/sh
+case "$1" in
+ describe) cat >/dev/null; echo '{"program_name":"demo","version":1}';;
+ preflight) cat > '` + log + `'; trap '' TERM; sleep 30 & wait;;
+esac
+`
+	os.WriteFile(req.Programs["demo"].Path, []byte(script), 0700)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := Execute(ctx, req, spec, false); done <- err }()
+	var work string
+	deadline := time.After(10 * time.Second)
+	for work == "" {
+		if content, err := os.ReadFile(log); err == nil {
+			var request map[string]any
+			if Decode(content, &request) == nil {
+				work, _ = request["output_dir"].(string)
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatal("preflight never started")
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := os.WriteFile(filepath.Join(work, "decoded.wav"), []byte("incomplete audio"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancellation unexpectedly succeeded")
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("preflight did not terminate")
+	}
+	if _, err := os.Stat(work); !os.IsNotExist(err) {
+		t.Fatal("preflight normalization files survived cancellation")
+	}
+}
