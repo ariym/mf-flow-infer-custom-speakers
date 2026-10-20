@@ -48,6 +48,11 @@ type Spec struct {
 }
 
 func Decode(data []byte, value any) error {
+	keys := json.NewDecoder(bytes.NewReader(data))
+	keys.UseNumber()
+	if err := uniqueKeys(keys); err != nil {
+		return err
+	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 	d.DisallowUnknownFields()
@@ -59,6 +64,47 @@ func Decode(data []byte, value any) error {
 		return errors.New("expected one JSON object")
 	}
 	return nil
+}
+func uniqueKeys(d *json.Decoder) error {
+	token, err := d.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for d.More() {
+			key, err := d.Token()
+			if err != nil {
+				return err
+			}
+			name, ok := key.(string)
+			if !ok {
+				return errors.New("expected JSON object key")
+			}
+			if seen[name] {
+				return fmt.Errorf("duplicate JSON key: %s", name)
+			}
+			seen[name] = true
+			if err := uniqueKeys(d); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for d.More() {
+			if err := uniqueKeys(d); err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+	_, err = d.Token()
+	return err
 }
 func Hash(path string) (string, error) {
 	f, err := os.Open(path)
@@ -248,12 +294,22 @@ func Execute(ctx context.Context, req Request, spec Spec, onlyPreflight bool) (m
 	if onlyPreflight {
 		return map[string]any{"ready": true, "checks": checks}, nil
 	}
-	fingerprintInput := map[string]any{"flow": spec.Key, "input": req.Input, "checks": checks, "programs": req.Programs, "identities": identities}
+	fingerprintInput := map[string]any{"flow": spec, "input": req.Input, "checks": checks, "programs": req.Programs, "identities": identities}
 	canonical, _ := json.Marshal(fingerprintInput)
 	sum := sha256.Sum256(canonical)
 	fingerprint := hex.EncodeToString(sum[:])
 	final := filepath.Join(root, req.JobID)
-	if old, err := os.ReadFile(filepath.Join(final, "result.json")); err == nil {
+	loadExisting := func() (map[string]any, error) {
+		old, err := os.ReadFile(filepath.Join(final, "result.json"))
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return nil, err
+			}
+			if _, e := os.Lstat(final); !os.IsNotExist(e) {
+				return nil, errors.New("output destination exists without a complete result")
+			}
+			return nil, nil
+		}
 		var result map[string]any
 		if err = Decode(old, &result); err != nil {
 			return nil, err
@@ -265,6 +321,9 @@ func Execute(ctx context.Context, req Request, spec Spec, onlyPreflight bool) (m
 			return nil, err
 		}
 		return result, nil
+	}
+	if result, err := loadExisting(); err != nil || result != nil {
+		return result, err
 	}
 	lock := filepath.Join(root, ".mf-"+req.JobID+".lock")
 	f, err := os.OpenFile(lock, os.O_CREATE|os.O_RDWR, 0600)
@@ -278,6 +337,9 @@ func Execute(ctx context.Context, req Request, spec Spec, onlyPreflight bool) (m
 	// Advisory locks are released by the OS after crashes. Keep the inode so a
 	// competing retry cannot acquire a different file while this lock is held.
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	if result, err := loadExisting(); err != nil || result != nil {
+		return result, err
+	}
 	stage, err := os.MkdirTemp(root, ".mf-"+req.JobID+"-")
 	if err != nil {
 		return nil, err
